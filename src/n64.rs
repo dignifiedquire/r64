@@ -1,4 +1,4 @@
-use emu::bus::be::{Bus, DevPtr, Mem};
+use emu::bus::be::{Bus, DevPtr};
 use emu::gfx::{GfxBufferMutLE, Rgb888};
 use emu::hw;
 use emu::sync;
@@ -10,6 +10,7 @@ use super::ai::Ai;
 use super::cartridge::{Cartridge, CicModel};
 use super::dp::Dp;
 use super::errors::*;
+use super::mi::Mi;
 use super::mips64;
 use super::pi::Pi;
 use super::ri::Ri;
@@ -30,6 +31,7 @@ pub struct N64 {
     dp: DevPtr<Dp>,
     vi: DevPtr<Vi>,
     ai: DevPtr<Ai>,
+    mi: DevPtr<Mi>,
     ri: DevPtr<Ri>,
 }
 
@@ -51,6 +53,7 @@ impl N64 {
         let vi = DevPtr::new(Vi::new(logger.new(o!()), bus.clone()));
         let ai = DevPtr::new(Ai::new(logger.new(o!())));
         let ri = DevPtr::new(Ri::new(logger.new(o!())));
+        let mi = DevPtr::new(Mi::new(logger.new(o!()), cpu.clone()));
 
         {
             // Install CPU coprocessors
@@ -70,6 +73,7 @@ impl N64 {
             bus.map_device(0x0404_0000, &sp, 1)?;
             bus.map_device(0x0408_0000, &sp, 2)?;
             bus.map_device(0x0410_0000, &dp, 0)?;
+            bus.map_device(0x0430_0000, &mi, 0)?;
             bus.map_device(0x0440_0000, &vi, 0)?;
             bus.map_device(0x0450_0000, &ai, 0)?;
             bus.map_device(0x0460_0000, &pi, 0)?;
@@ -105,6 +109,7 @@ impl N64 {
             dp,
             vi,
             ai,
+            mi,
             ri,
         });
     }

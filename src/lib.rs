@@ -17,6 +17,8 @@ extern crate bitflags;
 #[macro_use]
 extern crate error_chain;
 
+extern crate bit_field;
+
 pub mod errors {
     error_chain!{
         foreign_links {
@@ -31,6 +33,7 @@ mod vops;
 pub mod ai;
 pub mod cartridge;
 pub mod dp;
+pub mod mi;
 pub mod mips64;
 pub mod pi;
 pub mod ri;

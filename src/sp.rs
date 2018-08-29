@@ -9,6 +9,9 @@ use mips64;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+// TODO: which is the halt line for the RSP??
+const HALT_LINE: mips64::Line = mips64::Line::IP2;
+
 bitflags! {
     struct StatusFlags: u32 {
         const HALT =            0b00000001;
@@ -102,7 +105,7 @@ impl Sp {
             cpu.set_cop2(SpVector::new(&sp, spb.logger.new(o!())));
 
             let ctx = cpu.ctx_mut();
-            ctx.set_halt_line(true);
+            ctx.set_line(HALT_LINE, true);
             ctx.set_pc(0);
         }
 
@@ -212,7 +215,7 @@ impl Sp {
         // HALT status changed, propagate effects to CPU
         if changed.contains(StatusFlags::HALT) {
             if status.contains(StatusFlags::HALT) {
-                ctx.set_halt_line(true);
+                ctx.set_line(HALT_LINE, true);
                 if status.contains(StatusFlags::INTBREAK) {
                     // FIXME: generate interrupt on break
                 }
@@ -222,7 +225,7 @@ impl Sp {
                 // rules doesn't allow me re-entrancy into CPU.
                 //cpu.reset();
                 ctx.set_pc(0x1000);
-                ctx.set_halt_line(false);
+                ctx.set_line(HALT_LINE, false);
             }
         }
     }

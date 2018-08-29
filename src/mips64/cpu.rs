@@ -8,6 +8,51 @@ use slog;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+// -- Lines
+
+// -- CPU Cause Reg
+
+// IP0 Bit  8 - Software 1 	CAUSE_SW1 	Software generated interrupt 1
+// IP1 Bit  9 - Software 2 	CAUSE_SW2 	Software generated interrupt 2
+// IP2 Bit 10 - RCP 	        CAUSE_IP3 	RCP interrupt asserted
+// IP3 Bit 11 - Cartridge 	CAUSE_IP4 	A peripheral has generated an interrupt
+// IP4 Bit 12 - Pre-nmi 	CAUSE_IP5 	User has pushed reset button on console
+// IP5 Bit 13 - RDB Read 	CAUSE_IP6 	Indy has read the value in the RDB port
+// IP6 Bit 14 - RDB Write 	CAUSE_IP7 	Indy has written a value to the RDB port
+// IP7 Bit 15 - Counter 	CAUSE_IP8 	Internal counter has reached its terminal count
+
+// -- CPU Interrupt Reg
+// can be written to by external hardware
+//
+// Bit [0..4] - IP0 - IP4
+// Bit 6  - Pin NMI
+
+// interrupt reg + pins are or'ed together => cause reg
+
+pub enum Line {
+    // Software Interrupts
+    // [n64-os] SW1
+    IP0 = 0b0000_0001,
+    // [n64-os] SW2
+    IP1 = 0b0000_0010,
+
+    // External Interrupts
+    // [n64-os] IP3 - RCP
+    IP2 = 0b0000_0100,
+    // [n64-os] IP4 - Cartridge
+    IP3 = 0b0000_1000,
+    // [n64-os]
+    IP4 = 0b0001_0000,
+    // [n64-os] SW1
+    IP5 = 0b0010_0000,
+
+    // NMI
+    IP6 = 0b0100_0000,
+
+    // Timer Interrupt
+    IP7 = 0b1000_0000,
+}
+
 /// Cop is a MIPS64 coprocessor that can be installed within the core.
 pub trait Cop {
     fn reg(&self, idx: usize) -> u128;
@@ -61,10 +106,6 @@ pub enum Exception {
     NMI = 0x102,
 }
 
-struct Lines {
-    halt: bool,
-}
-
 /// Cop0 is a MIPS64 coprocessor #0, which (in addition to being a normal coprocessor)
 /// it is able to control execution of the core by triggering exceptions.
 pub trait Cop0: Cop {
@@ -85,7 +126,7 @@ pub struct CpuContext {
     pub(crate) branch_pc: u32,
     pub clock: i64,
     pub tight_exit: bool,
-    lines: Lines,
+    lines: u8,
 }
 
 pub struct Cpu {
@@ -195,9 +236,17 @@ impl CpuContext {
         }
     }
 
-    pub fn set_halt_line(&mut self, stat: bool) {
-        self.lines.halt = stat;
-        self.tight_exit = true;
+    pub fn set_line(&mut self, line: Line, stat: bool) {
+        let line_val = line as u8;
+        if stat {
+            // check activation of a new line
+            if self.lines | line_val != 0 {
+                self.tight_exit = true;
+            }
+            self.lines |= line_val;
+        } else {
+            self.lines &= line_val;
+        }
     }
 
     pub fn set_pc(&mut self, pc: u32) {
@@ -271,7 +320,7 @@ impl Cpu {
                 branch_pc: 0,
                 clock: 0,
                 tight_exit: false,
-                lines: Lines { halt: false },
+                lines: 0,
             },
             bus: bus,
             cop0: None,
@@ -548,10 +597,11 @@ impl Cpu {
     pub fn run(&mut self, until: i64) {
         self.until = until;
         while self.ctx.clock < self.until {
-            if self.ctx.lines.halt {
-                self.ctx.clock = self.until;
-                return;
-            }
+            // TODO: check lines
+            // if self.ctx.lines.halt {
+            //     self.ctx.clock = self.until;
+            //     return;
+            // }
 
             if let Some(ref mut cop0) = self.cop0 {
                 if cop0.pending_int() {
