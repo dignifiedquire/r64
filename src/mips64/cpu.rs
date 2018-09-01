@@ -90,20 +90,55 @@ pub trait Cop {
 }
 
 pub enum Exception {
-    INT = 0x00,  // Interrupt
-    MOD = 0x01,  // TLB modification exception
-    TLBL = 0x02, // TLB load/fetch
-    TLBS = 0x03, // TLB store
-    ADEL = 0x04, // Address error (load/fetch)
-    ADES = 0x05, // Address error (store)
-    SYS = 0x08,  // Syscall
-    BP = 0x09,   // Breakpoint
-    RI = 0x0A,   // Reserved instruction
+    INT = 0x00,   // Interrupt
+    MOD = 0x01,   // TLB modification exception
+    ADEL = 0x04,  // Address error (load/fetch)
+    ADES = 0x05,  // Address error (store)
+    IBE = 0x06,   // Bus Error exception (instruction fetch)
+    DBE = 0x07,   // Bus Error exception (data reference: load or store)
+    SYS = 0x08,   // Syscall
+    BP = 0x09,    // Breakpoint
+    RI = 0x0A,    // Reserved instruction
+    TR = 0x0B,    // Trap exception
+    FPE = 0x0F,   // Floating point exception
+    WATCH = 0x17, // Watch exception
+
+    // Sepcial codes, to signal miss vs invalid tlb exceptions
+    TLBLInvalid = 0xE0, // TLB Load Invalid
+    TLBLMiss = 0xE1,    // TLB Load Miss
+    TLBSInvalid = 0xE2, // TLB Store Invalid
+    TLBSMiss = 0xE3,    // TLB Store Miss
 
     // Special exceptions that are not specified in the Cause register
-    RESET = 0x100,
-    SOFTRESET = 0x101,
-    NMI = 0x102,
+    RESET = 0xF0,
+    SOFTRESET = 0xF1,
+    NMI = 0xF2,
+}
+
+impl Exception {
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            Exception::INT => 0x00,
+            Exception::MOD => 0x01,
+            Exception::ADEL => 0x04,
+            Exception::ADES => 0x05,
+            Exception::IBE => 0x06,
+            Exception::DBE => 0x07,
+            Exception::SYS => 0x08,
+            Exception::BP => 0x09,
+            Exception::RI => 0x0A,
+            Exception::TR => 0x0B,
+            Exception::FPE => 0x0F,
+            Exception::WATCH => 0x17,
+            Exception::TLBLInvalid => 0x02,
+            Exception::TLBLMiss => 0x02,
+            Exception::TLBSInvalid => 0x03,
+            Exception::TLBSMiss => 0x03,
+            Exception::RESET => 0xF0,
+            Exception::SOFTRESET => 0xF1,
+            Exception::NMI => 0xF2,
+        }
+    }
 }
 
 /// Cop0 is a MIPS64 coprocessor #0, which (in addition to being a normal coprocessor)
@@ -114,8 +149,11 @@ pub trait Cop0: Cop {
     /// exc == Exception::Int.
     fn pending_int(&self) -> bool;
 
-    /// Trigger the specified excepion.
+    /// Trigger the specified exception.
     fn exception(&mut self, ctx: &mut CpuContext, exc: Exception);
+
+    /// Translate a virtual address into the physical counter part.
+    fn translate_addr(&mut self, vaddr: u32) -> u32;
 }
 
 pub struct CpuContext {
@@ -511,31 +549,101 @@ impl Cpu {
             0x18 => check_overflow_add!(op, *op.mrt64(), op.irs64(), op.sximm64()), // DADDI
             0x19 => *op.mrt64() = (op.irs64() + op.sximm64()) as u64,        // DADDIU
 
-            0x20 => *op.mrt64() = op.cpu.read::<u8>(op.ea()).sx64(), // LB
-            0x21 => *op.mrt64() = op.cpu.read::<u16>(op.ea()).sx64(), // LH
-            0x22 => *op.mrt64() = op.cpu.lwl(op.ea(), op.rt32()).sx64(), // LWL
-            0x23 => *op.mrt64() = op.cpu.read::<u32>(op.ea()).sx64(), // LW
-            0x24 => *op.mrt64() = op.cpu.read::<u8>(op.ea()) as u64, // LBU
-            0x25 => *op.mrt64() = op.cpu.read::<u16>(op.ea()) as u64, // LHU
-            0x26 => *op.mrt64() = op.cpu.lwr(op.ea(), op.rt32()).sx64(), // LWR
-            0x27 => *op.mrt64() = op.cpu.read::<u32>(op.ea()) as u64, // LWU
-            0x28 => op.cpu.write::<u8>(op.ea(), op.rt32() as u8),    // SB
-            0x29 => op.cpu.write::<u16>(op.ea(), op.rt32() as u16),  // SH
-            0x2A => op.cpu.write::<u32>(op.ea(), op.cpu.swl(op.ea(), op.rt32())), // SWL
-            0x2B => op.cpu.write::<u32>(op.ea(), op.rt32()),         // SW
-            0x2E => op.cpu.write::<u32>(op.ea(), op.cpu.swr(op.ea(), op.rt32())), // SWR
-            0x2F => {}                                               // CACHE
+            0x20 => {
+                // LB
+                let ea = op.ea();
+                *op.mrt64() = op.cpu.read::<u8>(ea).sx64();
+            }
+            0x21 => {
+                // LH
+                let ea = op.ea();
+                *op.mrt64() = op.cpu.read::<u16>(ea).sx64();
+            }
+            0x22 => {
+                // LWL
+                let ea = op.ea();
+                let rt = op.rt32();
+                *op.mrt64() = op.cpu.lwl(ea, rt).sx64();
+            }
+            0x23 => {
+                // LW
+                let ea = op.ea();
+                *op.mrt64() = op.cpu.read::<u32>(ea).sx64();
+            }
+            0x24 => {
+                // LBU
+                let ea = op.ea();
+                *op.mrt64() = op.cpu.read::<u8>(ea) as u64;
+            }
+            0x25 => {
+                // LHU
+                let ea = op.ea();
+                *op.mrt64() = op.cpu.read::<u16>(ea) as u64;
+            }
+            0x26 => {
+                // LWR
+                let ea = op.ea();
+                let rt = op.rt32();
+                *op.mrt64() = op.cpu.lwr(ea, rt).sx64();
+            }
+            0x27 => {
+                // LWU
+                let ea = op.ea();
+                *op.mrt64() = op.cpu.read::<u32>(ea) as u64;
+            }
+            0x28 => {
+                // SB
+                let ea = op.ea();
+                let rt = op.rt32() as u8;
+                op.cpu.write::<u8>(ea, rt);
+            }
+            0x29 => {
+                // SH
+                let ea = op.ea();
+                let rt = op.rt32() as u16;
+                op.cpu.write::<u16>(ea, rt);
+            }
+            0x2A => {
+                // SWL
+                let ea = op.ea();
+                let rt = op.rt32();
+                let res = op.cpu.swl(ea, rt);
+                op.cpu.write::<u32>(ea, res);
+            }
+            0x2B => {
+                // SW
+                let ea = op.ea();
+                let rt = op.rt32();
+                op.cpu.write::<u32>(ea, rt);
+            }
+            0x2E => {
+                // SWR
+                let ea = op.ea();
+                let rt = op.rt32();
+                let res = op.cpu.swr(ea, rt);
+                op.cpu.write::<u32>(ea, res);
+            }
+            0x2F => {} // CACHE
 
             0x31 => if_cop!(op, cop1, cop1.lwc(op.opcode, &op.cpu.ctx, &op.cpu.bus)), // LWC1
             0x32 => if_cop!(op, cop2, cop2.lwc(op.opcode, &op.cpu.ctx, &op.cpu.bus)), // LWC2
             0x35 => if_cop!(op, cop1, cop1.ldc(op.opcode, &op.cpu.ctx, &op.cpu.bus)), // LDC1
             0x36 => if_cop!(op, cop2, cop2.ldc(op.opcode, &op.cpu.ctx, &op.cpu.bus)), // LDC2
-            0x37 => *op.mrt64() = op.cpu.read::<u64>(op.ea()),                        // LD
+            0x37 => {
+                // LD
+                let ea = op.ea();
+                *op.mrt64() = op.cpu.read::<u64>(ea);
+            }
             0x39 => if_cop!(op, cop1, cop1.swc(op.opcode, &op.cpu.ctx, &op.cpu.bus)), // SWC1
             0x3A => if_cop!(op, cop2, cop2.swc(op.opcode, &op.cpu.ctx, &op.cpu.bus)), // SWC2
             0x3D => if_cop!(op, cop1, cop1.sdc(op.opcode, &op.cpu.ctx, &op.cpu.bus)), // SDC1
             0x3E => if_cop!(op, cop2, cop2.sdc(op.opcode, &op.cpu.ctx, &op.cpu.bus)), // SDC2
-            0x3F => op.cpu.write::<u64>(op.ea(), op.rt64()),                          // SD
+            0x3F => {
+                // SD
+                let ea = op.ea();
+                let rt = op.rt64();
+                op.cpu.write::<u64>(ea, rt);
+            }
 
             _ => panic!(
                 "unimplemented opcode: func=0x{:x?}, pc={}",
@@ -545,28 +653,28 @@ impl Cpu {
         }
     }
 
-    fn lwl(&self, addr: u32, reg: u32) -> u32 {
+    fn lwl(&mut self, addr: u32, reg: u32) -> u32 {
         let mem = self.read::<u32>(addr);
         let shift = (addr & 3) * 8;
         let mask = (1 << shift) - 1;
         (reg & mask) | ((mem << shift) & !mask)
     }
 
-    fn lwr(&self, addr: u32, reg: u32) -> u32 {
+    fn lwr(&mut self, addr: u32, reg: u32) -> u32 {
         let mem = self.read::<u32>(addr);
         let shift = (!addr & 3) * 8;
         let mask = ((1u64 << (32 - shift)) - 1) as u32;
         (reg & !mask) | ((mem >> shift) & mask)
     }
 
-    fn swl(&self, addr: u32, reg: u32) -> u32 {
+    fn swl(&mut self, addr: u32, reg: u32) -> u32 {
         let mem = self.read::<u32>(addr);
         let shift = (addr & 3) * 8;
         let mask = ((1u64 << (32 - shift)) - 1) as u32;
         (mem & !mask) | ((reg >> shift) & mask)
     }
 
-    fn swr(&self, addr: u32, reg: u32) -> u32 {
+    fn swr(&mut self, addr: u32, reg: u32) -> u32 {
         let mem = self.read::<u32>(addr);
         let shift = (!addr & 3) * 8;
         let mask = (1 << shift) - 1;
@@ -582,22 +690,27 @@ impl Cpu {
         &self.last_fetch_mem
     }
 
-    fn read<U: MemInt>(&self, addr: u32) -> U {
-        self.bus
-            .borrow()
-            .read::<U>(addr & 0x1FFF_FFFF & !(U::SIZE as u32 - 1))
+    fn translate_addr(&mut self, vaddr: u32) -> u32 {
+        match self.cop0 {
+            Some(ref mut cop0) => cop0.translate_addr(vaddr),
+            None => panic!("Missing cop0"),
+        }
     }
 
-    fn write<U: MemInt>(&self, addr: u32, val: U) {
-        self.bus
-            .borrow()
-            .write::<U>(addr & 0x1FFF_FFFF & !(U::SIZE as u32 - 1), val);
+    fn read<U: MemInt>(&mut self, vaddr: u32) -> U {
+        let paddr = self.translate_addr(vaddr) & !(U::SIZE as u32 - 1);
+        self.bus.borrow().read::<U>(paddr)
+    }
+
+    fn write<U: MemInt>(&mut self, vaddr: u32, val: U) {
+        let paddr = self.translate_addr(vaddr) & !(U::SIZE as u32 - 1);
+        self.bus.borrow().write::<U>(paddr, val);
     }
 
     pub fn run(&mut self, until: i64) {
         self.until = until;
         while self.ctx.clock < self.until {
-            // TODO: check lines
+            // TODO: check for halt condition
             // if self.ctx.lines.halt {
             //     self.ctx.clock = self.until;
             //     return;

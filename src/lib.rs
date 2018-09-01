@@ -19,6 +19,11 @@ extern crate error_chain;
 
 extern crate bit_field;
 
+#[macro_use]
+extern crate bitfield;
+
+extern crate rand;
+
 pub mod errors {
     error_chain!{
         foreign_links {

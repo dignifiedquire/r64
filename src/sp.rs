@@ -339,6 +339,11 @@ impl mips64::Cop0 for SpCop0 {
             _ => unimplemented!(),
         }
     }
+
+    fn translate_addr(&mut self, vaddr: u32) -> u32 {
+        // TODO: verify this is how the RSP handles address translation
+        vaddr & 0x1FFF_FFFF
+    }
 }
 
 impl mips64::Cop for SpCop0 {
